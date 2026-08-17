@@ -186,8 +186,8 @@ CONFIG_SCHEMA = cv.All(
 
 async def to_code(config):
     cg.add_library("can_common", None, "https://github.com/collin80/can_common.git#8585f9dc807ebbeedeb509d74159f40f538d2d65")
-    # collin80/esp32_can@6d835ae + drop unused deprecated ADC includes (issue #97)
-    cg.add_library("esp32_can", None, "https://github.com/vekexasia/esp32_can.git#13b42b4f4b7ad14939165270080303675ad9fb1e")
+    # TechOverflow fork supports ESP-IDF 5.5+ and declares its can_common dependency.
+    cg.add_library("esp32_can", None, "https://github.com/TechOverflow/esp32_can.git#695ad3b38d6b9ef4b047d92d6cc7dbdcccea9f76")
 
 
     var = cg.new_Pvariable(config[CONF_ID])
