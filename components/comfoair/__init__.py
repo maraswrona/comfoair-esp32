@@ -107,9 +107,12 @@ return vals[0] == 0 ? "auto": (vals[0] == 1 ? "cold": "warm");
 '''
     },
 
-    # Device state (PDO 16). Also feeds the "away" binary_sensor below —
-    # value 2 ("filterwizard") is the unit entering its filter-change nag,
-    # the proactive signal for "time to change filters".
+    # Device state (PDO 16). Also feeds the "away" binary_sensor below.
+    # value 2 ("filterwizard") is only set while someone is actively
+    # navigating the unit's own display through its filter-change wizard —
+    # confirmed live: it does NOT flip on its own when a filter becomes due,
+    # so it's not a standing "time to change filters" alert, just a "are you
+    # currently in that menu" state.
     "device_state": {
         "PDO": 16,
         "code": '''

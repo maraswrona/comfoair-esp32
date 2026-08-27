@@ -233,19 +233,38 @@ class Comfoair: public Component, public climate::Climate, public esphome::api::
         // than one map at once (e.g. PDO 16 feeds both the "away" binary sensor
         // and the "device_state" text sensor). An else-if chain here would let
         // only the first-matching map ever receive updates for a shared PDO.
+        bool matched = sensor_it != sensors.end();
+
         auto text_it = textSensors.find(PDOID);
         if (text_it != textSensors.end()) {
+            matched = true;
             const auto& el = text_it->second;
             std::string val = el.conversion(vals);
-            ESP_LOGD(TAG, "textSensor pdo=%d name=%s value=%s", PDOID, el.sensor->get_name().c_str(), val.c_str());
+            // len + raw are for troubleshooting: `canMessage` is a reused member
+            // buffer, not cleared between reads. A frame shorter than the CAN
+            // DLC below leaves the untouched higher-index bytes holding
+            // whatever the previous CAN0.read() left there, not real zeros.
+            ESP_LOGD(TAG, "textSensor pdo=%d name=%s value=%s len=%d raw=%02X%02X%02X%02X%02X%02X%02X%02X",
+                     PDOID, el.sensor->get_name().c_str(), val.c_str(), canMessage.length,
+                     vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]);
             el.sensor->publish_state(val);
             maybeUpdateClimate(PDOID, val);
         }
 
         auto binary_it = binarySensors.find(PDOID);
         if (binary_it != binarySensors.end()) {
+            matched = true;
             const auto& el = binary_it->second;
             el.sensor->publish_state(el.conversion(vals));
+        }
+
+        if (!matched) {
+            // Catch-all for PDOs we don't map to any sensor yet — watch this
+            // while reproducing an on-device error/warning to spot which PDO
+            // (if any) it shows up on.
+            ESP_LOGD(TAG, "unmapped pdo=%d len=%d raw=%02X%02X%02X%02X%02X%02X%02X%02X",
+                     PDOID, canMessage.length,
+                     vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]);
         }
     }
 
