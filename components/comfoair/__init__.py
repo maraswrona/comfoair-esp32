@@ -145,45 +145,55 @@ switch (vals[0]) {
     },
 
     # Airflow constraint bitset (PDO 230, CN_INT64, 8 bytes little-endian).
-    # Bit 45 marks the field as populated; "resistance"/"resistance_guard"
-    # firing means duct/filter resistance is limiting airflow — the runtime
-    # symptom of a blocked intake or a pressure-sensor complaint.
+    # "resistance"/"resistance_guard" firing means duct/filter resistance is
+    # limiting airflow — the runtime symptom of a blocked intake or a
+    # pressure-sensor complaint.
     # Bit mapping per https://github.com/michaelarnauts/aiocomfoconnect/blob/master/aiocomfoconnect/util.py
+    # NOTE: that reference also gates on bit 45 ("field populated"), but a
+    # live Q450 capture showed a real, non-zero 8-byte frame with bit 45
+    # never set — that gate doesn't hold for the raw CAN broadcast (it may
+    # be specific to the LAN-C gateway's response encoding). Dropped here;
+    # any bit we don't have a name for is reported as "unknown_bit_N"
+    # instead of being silently discarded, so nothing gets lost again.
     "ventilation_constraints": {
         "PDO": 230,
         "code": '''
 uint64_t v = 0;
 for (int i = 0; i < 8; i++) v |= ((uint64_t)vals[i]) << (8 * i);
-if (!(v & (1ULL << 45))) return "unavailable";
 std::string out;
-auto add = [&](const char* name){ if (!out.empty()) out += ","; out += name; };
-if ((v & (1ULL << 2)) || (v & (1ULL << 3))) add("resistance");
-if (v & (1ULL << 4)) add("preheater_negative");
-if ((v & (1ULL << 5)) || (v & (1ULL << 7))) add("noise_guard");
-if ((v & (1ULL << 6)) || (v & (1ULL << 8))) add("resistance_guard");
-if (v & (1ULL << 9)) add("frost_protection");
-if (v & (1ULL << 10)) add("bypass");
-if (v & (1ULL << 12)) add("analog_input_1");
-if (v & (1ULL << 13)) add("analog_input_2");
-if (v & (1ULL << 14)) add("analog_input_3");
-if (v & (1ULL << 15)) add("analog_input_4");
-if (v & (1ULL << 16)) add("hood");
-if (v & (1ULL << 18)) add("analog_preset");
-if (v & (1ULL << 19)) add("comfocool");
-if (v & (1ULL << 22)) add("preheater_positive");
-if (v & (1ULL << 23)) add("rf_sensor_flow_preset");
-if (v & (1ULL << 24)) add("rf_sensor_flow_proportional");
-if (v & (1ULL << 25)) add("temperature_comfort");
-if (v & (1ULL << 26)) add("humidity_comfort");
-if (v & (1ULL << 27)) add("humidity_protection");
-if (v & (1ULL << 47)) add("co2_zone_1");
-if (v & (1ULL << 48)) add("co2_zone_2");
-if (v & (1ULL << 49)) add("co2_zone_3");
-if (v & (1ULL << 50)) add("co2_zone_4");
-if (v & (1ULL << 51)) add("co2_zone_5");
-if (v & (1ULL << 52)) add("co2_zone_6");
-if (v & (1ULL << 53)) add("co2_zone_7");
-if (v & (1ULL << 54)) add("co2_zone_8");
+uint64_t consumed = 0;
+auto add = [&](const char* name, uint64_t bits){ if (!out.empty()) out += ","; out += name; consumed |= bits; };
+if (v & ((1ULL << 2) | (1ULL << 3))) add("resistance", (1ULL << 2) | (1ULL << 3));
+if (v & (1ULL << 4)) add("preheater_negative", 1ULL << 4);
+if (v & ((1ULL << 5) | (1ULL << 7))) add("noise_guard", (1ULL << 5) | (1ULL << 7));
+if (v & ((1ULL << 6) | (1ULL << 8))) add("resistance_guard", (1ULL << 6) | (1ULL << 8));
+if (v & (1ULL << 9)) add("frost_protection", 1ULL << 9);
+if (v & (1ULL << 10)) add("bypass", 1ULL << 10);
+if (v & (1ULL << 12)) add("analog_input_1", 1ULL << 12);
+if (v & (1ULL << 13)) add("analog_input_2", 1ULL << 13);
+if (v & (1ULL << 14)) add("analog_input_3", 1ULL << 14);
+if (v & (1ULL << 15)) add("analog_input_4", 1ULL << 15);
+if (v & (1ULL << 16)) add("hood", 1ULL << 16);
+if (v & (1ULL << 18)) add("analog_preset", 1ULL << 18);
+if (v & (1ULL << 19)) add("comfocool", 1ULL << 19);
+if (v & (1ULL << 22)) add("preheater_positive", 1ULL << 22);
+if (v & (1ULL << 23)) add("rf_sensor_flow_preset", 1ULL << 23);
+if (v & (1ULL << 24)) add("rf_sensor_flow_proportional", 1ULL << 24);
+if (v & (1ULL << 25)) add("temperature_comfort", 1ULL << 25);
+if (v & (1ULL << 26)) add("humidity_comfort", 1ULL << 26);
+if (v & (1ULL << 27)) add("humidity_protection", 1ULL << 27);
+if (v & (1ULL << 47)) add("co2_zone_1", 1ULL << 47);
+if (v & (1ULL << 48)) add("co2_zone_2", 1ULL << 48);
+if (v & (1ULL << 49)) add("co2_zone_3", 1ULL << 49);
+if (v & (1ULL << 50)) add("co2_zone_4", 1ULL << 50);
+if (v & (1ULL << 51)) add("co2_zone_5", 1ULL << 51);
+if (v & (1ULL << 52)) add("co2_zone_6", 1ULL << 52);
+if (v & (1ULL << 53)) add("co2_zone_7", 1ULL << 53);
+if (v & (1ULL << 54)) add("co2_zone_8", 1ULL << 54);
+uint64_t unmatched = v & ~consumed;
+for (int i = 0; i < 64; i++) {
+    if (unmatched & (1ULL << i)) add(("unknown_bit_" + std::to_string(i)).c_str(), 1ULL << i);
+}
 return out.empty() ? "none" : out;
 '''
     },
