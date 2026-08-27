@@ -214,8 +214,12 @@ return vals[0] == 1;
     },
     "away": {
         "PDO": 16,
+        # Device state (see https://github.com/michaelarnauts/aiocomfoconnect/blob/master/docs/PROTOCOL-PDO.md):
+        # 7 = away, 8 = DFC (an unrelated state). Confirmed live on real
+        # hardware: entering away mode reports vals[0] == 7, never 8, so
+        # this sensor never fired correctly.
         "code": '''
-return vals[0] == 0x08;
+return vals[0] == 0x07;
         '''
     },
 
