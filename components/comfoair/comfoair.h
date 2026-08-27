@@ -227,19 +227,25 @@ class Comfoair: public Component, public climate::Climate, public esphome::api::
             }
             el.sensor->publish_state(sensorVal);
             maybeUpdateClimate(PDOID, sensorVal);
-        } else {
-            auto text_it = textSensors.find(PDOID);
-            if (text_it != textSensors.end()) {
-                const auto& el = text_it->second;
-                el.sensor->publish_state(el.conversion(vals));
-                maybeUpdateClimate(PDOID, el.conversion(vals));
-            } else {
-                auto binary_it = binarySensors.find(PDOID);
-                if (binary_it != binarySensors.end()) {
-                    const auto& el = binary_it->second;
-                    el.sensor->publish_state(el.conversion(vals));
-                }
-            }
+        }
+
+        // Checked independently (not else-if): a PDO can be registered in more
+        // than one map at once (e.g. PDO 16 feeds both the "away" binary sensor
+        // and the "device_state" text sensor). An else-if chain here would let
+        // only the first-matching map ever receive updates for a shared PDO.
+        auto text_it = textSensors.find(PDOID);
+        if (text_it != textSensors.end()) {
+            const auto& el = text_it->second;
+            std::string val = el.conversion(vals);
+            ESP_LOGD(TAG, "textSensor pdo=%d name=%s value=%s", PDOID, el.sensor->get_name().c_str(), val.c_str());
+            el.sensor->publish_state(val);
+            maybeUpdateClimate(PDOID, val);
+        }
+
+        auto binary_it = binarySensors.find(PDOID);
+        if (binary_it != binarySensors.end()) {
+            const auto& el = binary_it->second;
+            el.sensor->publish_state(el.conversion(vals));
         }
     }
 

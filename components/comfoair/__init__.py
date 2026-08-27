@@ -107,6 +107,84 @@ return vals[0] == 0 ? "auto": (vals[0] == 1 ? "cold": "warm");
 '''
     },
 
+    # Device state (PDO 16). Also feeds the "away" binary_sensor below —
+    # value 2 ("filterwizard") is the unit entering its filter-change nag,
+    # the proactive signal for "time to change filters".
+    "device_state": {
+        "PDO": 16,
+        "code": '''
+switch (vals[0]) {
+    case 0: return "init";
+    case 1: return "normal";
+    case 2: return "filterwizard";
+    case 3: return "commissioning";
+    case 4: return "supplierfactory";
+    case 5: return "zehnderfactory";
+    case 6: return "standby";
+    case 7: return "away";
+    case 8: return "dfc";
+    default: return "unknown_" + std::to_string(vals[0]);
+}
+'''
+    },
+
+    # Filter unit status (PDO 18): 1=active (normal operation), 2=changing filter
+    # (user has the panel open / is mid-swap).
+    "filter_status": {
+        "PDO": 18,
+        "code": '''
+switch (vals[0]) {
+    case 1: return "active";
+    case 2: return "changing_filter";
+    default: return "unknown_" + std::to_string(vals[0]);
+}
+'''
+    },
+
+    # Airflow constraint bitset (PDO 230, CN_INT64, 8 bytes little-endian).
+    # Bit 45 marks the field as populated; "resistance"/"resistance_guard"
+    # firing means duct/filter resistance is limiting airflow — the runtime
+    # symptom of a blocked intake or a pressure-sensor complaint.
+    # Bit mapping per https://github.com/michaelarnauts/aiocomfoconnect/blob/master/aiocomfoconnect/util.py
+    "ventilation_constraints": {
+        "PDO": 230,
+        "code": '''
+uint64_t v = 0;
+for (int i = 0; i < 8; i++) v |= ((uint64_t)vals[i]) << (8 * i);
+if (!(v & (1ULL << 45))) return "unavailable";
+std::string out;
+auto add = [&](const char* name){ if (!out.empty()) out += ","; out += name; };
+if ((v & (1ULL << 2)) || (v & (1ULL << 3))) add("resistance");
+if (v & (1ULL << 4)) add("preheater_negative");
+if ((v & (1ULL << 5)) || (v & (1ULL << 7))) add("noise_guard");
+if ((v & (1ULL << 6)) || (v & (1ULL << 8))) add("resistance_guard");
+if (v & (1ULL << 9)) add("frost_protection");
+if (v & (1ULL << 10)) add("bypass");
+if (v & (1ULL << 12)) add("analog_input_1");
+if (v & (1ULL << 13)) add("analog_input_2");
+if (v & (1ULL << 14)) add("analog_input_3");
+if (v & (1ULL << 15)) add("analog_input_4");
+if (v & (1ULL << 16)) add("hood");
+if (v & (1ULL << 18)) add("analog_preset");
+if (v & (1ULL << 19)) add("comfocool");
+if (v & (1ULL << 22)) add("preheater_positive");
+if (v & (1ULL << 23)) add("rf_sensor_flow_preset");
+if (v & (1ULL << 24)) add("rf_sensor_flow_proportional");
+if (v & (1ULL << 25)) add("temperature_comfort");
+if (v & (1ULL << 26)) add("humidity_comfort");
+if (v & (1ULL << 27)) add("humidity_protection");
+if (v & (1ULL << 47)) add("co2_zone_1");
+if (v & (1ULL << 48)) add("co2_zone_2");
+if (v & (1ULL << 49)) add("co2_zone_3");
+if (v & (1ULL << 50)) add("co2_zone_4");
+if (v & (1ULL << 51)) add("co2_zone_5");
+if (v & (1ULL << 52)) add("co2_zone_6");
+if (v & (1ULL << 53)) add("co2_zone_7");
+if (v & (1ULL << 54)) add("co2_zone_8");
+return out.empty() ? "none" : out;
+'''
+    },
+
 }
 
 binarySensors = {
