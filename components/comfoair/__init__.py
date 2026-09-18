@@ -107,6 +107,43 @@ return vals[0] == 0 ? "auto": (vals[0] == 1 ? "cold": "warm");
 '''
     },
 
+    # Device state (PDO 16). Also feeds the "away" binary_sensor below.
+    # value 2 ("filterwizard") is only set while someone is actively
+    # navigating the unit's own display through its filter-change wizard —
+    # confirmed live: it does NOT flip on its own when a filter becomes due,
+    # so it's not a standing "time to change filters" alert, just a "are you
+    # currently in that menu" state.
+    "device_state": {
+        "PDO": 16,
+        "code": '''
+switch (vals[0]) {
+    case 0: return "init";
+    case 1: return "normal";
+    case 2: return "filterwizard";
+    case 3: return "commissioning";
+    case 4: return "supplierfactory";
+    case 5: return "zehnderfactory";
+    case 6: return "standby";
+    case 7: return "away";
+    case 8: return "dfc";
+    default: return "unknown_" + std::to_string(vals[0]);
+}
+'''
+    },
+
+    # Filter unit status (PDO 18): 1=active (normal operation), 2=changing filter
+    # (user has the panel open / is mid-swap).
+    "filter_status": {
+        "PDO": 18,
+        "code": '''
+switch (vals[0]) {
+    case 1: return "active";
+    case 2: return "changing_filter";
+    default: return "unknown_" + std::to_string(vals[0]);
+}
+'''
+    },
+
 }
 
 binarySensors = {
@@ -151,6 +188,64 @@ return vals[0] != 0;
         '''
     },
 }
+
+# PDO 230 airflow-constraint bitset — see comfoair_constraint_bit() in
+# comfoair.h for the byte layout and the bit-45 caveat. Bit mapping per
+# https://github.com/michaelarnauts/aiocomfoconnect/blob/master/aiocomfoconnect/util.py
+#
+# Only bits that apply to every unit (no optional accessory required) are
+# registered below as real sensors. Bits we could not identify at all (as
+# of this writing: 1, 45, 46 — live-observed as real, non-constant values,
+# but undocumented anywhere we could find) are deliberately left
+# unregistered rather than exposed under a guessed name; the raw frame is
+# still visible via the "binarySensor pdo=230 ... raw=..." ESP_LOGD line in
+# comfoair.h if you want to investigate further.
+#
+# To add a bit for hardware you have that isn't covered yet (a CO2 sensor,
+# an RF flow sensor, ComfoCool, a pre-heater, an analog input, a cooker
+# hood): uncomment the matching line below, or add a new one the same way —
+# each entry becomes its own binary_sensor, no other code changes needed.
+CONSTRAINT_BITS = {
+    "constraint_resistance": [2, 3],
+    "constraint_resistance_guard": [6, 8],
+    "constraint_noise_guard": [5, 7],
+    "constraint_frost_protection": [9],
+    "constraint_bypass": [10],
+    "constraint_temperature_comfort": [25],
+    "constraint_humidity_comfort": [26],
+    "constraint_humidity_protection": [27],
+    # "constraint_preheater_negative": [4],
+    # "constraint_analog_input_1": [12],
+    # "constraint_analog_input_2": [13],
+    # "constraint_analog_input_3": [14],
+    # "constraint_analog_input_4": [15],
+    # "constraint_hood": [16],
+    # "constraint_analog_preset": [18],
+    # "constraint_comfocool": [19],
+    # "constraint_preheater_positive": [22],
+    # "constraint_rf_sensor_flow_preset": [23],
+    # "constraint_rf_sensor_flow_proportional": [24],
+    # "constraint_co2_zone_1": [47],
+    # "constraint_co2_zone_2": [48],
+    # "constraint_co2_zone_3": [49],
+    # "constraint_co2_zone_4": [50],
+    # "constraint_co2_zone_5": [51],
+    # "constraint_co2_zone_6": [52],
+    # "constraint_co2_zone_7": [53],
+    # "constraint_co2_zone_8": [54],
+}
+for _constraint_name, _constraint_bits in CONSTRAINT_BITS.items():
+    # Fully qualified: this code string is spliced into a lambda at global
+    # scope in the generated main.cpp, outside namespace esphome::comfoair,
+    # so the unqualified name isn't visible there.
+    _check = " || ".join(f"esphome::comfoair::comfoair_constraint_bit(vals, {b})" for b in _constraint_bits)
+    binarySensors[_constraint_name] = {
+        "PDO": 230,
+        "code": f'''
+return {_check};
+'''
+    }
+
 GEN_SENSORS_SCHEMA = {
     cv.Optional(key, default=key): cv.maybe_simple_value(
         sensor.sensor_schema(unit_of_measurement=value['unit'], accuracy_decimals=math.trunc(math.log10(value['div'])) if 'div' in value else 0), key=CONF_NAME, )
