@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <esp32_can.h>
 
 #include "esphome/components/api/custom_api_device.h"
@@ -26,35 +27,58 @@ class ComfoSensor {
     CONV conversion;
 };
 
+// PDO 230 airflow-constraint bitset (CN_INT64, 8 bytes little-endian). Bit
+// mapping per https://github.com/michaelarnauts/aiocomfoconnect/blob/master/aiocomfoconnect/util.py
+// NOTE: that reference also requires bit 45 ("field populated") before
+// trusting any other bit. Live testing on a real Q450 showed real, non-zero
+// 8-byte frames with bit 45 unset — that gate doesn't hold for the raw CAN
+// broadcast (may be specific to the LAN-C gateway's response encoding
+// instead, which this component doesn't use). Not applied here.
+inline bool comfoair_constraint_bit(uint8_t *vals, int bit) {
+  uint64_t v = 0;
+  for (int i = 0; i < 8; i++) v |= ((uint64_t) vals[i]) << (8 * i);
+  return (v >> bit) & 1;
+}
+
 class Comfoair: public Component, public climate::Climate, public esphome::api::CustomAPIDevice {
 
  public:
   void set_rx(int rx) { rx_ = rx; }
   void set_tx(int tx) { tx_ = tx; }
+  // Shared by all register_* methods below: records a PDO for the boot-time
+  // RTR poll sweep (update_next()) and its display name, without adding a
+  // duplicate entry if several sensors already share this PDO.
+  void registerPDOKey(int PDOID, std::string key) {
+    if (std::find(this->PDOs.begin(), this->PDOs.end(), PDOID) == this->PDOs.end()) {
+        this->PDOs.push_back(PDOID);
+    }
+    this->PDOsMap[PDOID] = key;
+  }
   void register_sensor(sensor::Sensor *obj, std::string key, int PDOID, int conversionType, int divider) {
     ComfoSensor<sensor::Sensor, int> *cs = new ComfoSensor<sensor::Sensor, int>();
     cs->sensor = obj;
     cs->divider = divider;
     cs->conversion = conversionType;
     sensors[PDOID] = *cs;
-    this->PDOs.push_back(PDOID);
-    this->PDOsMap[PDOID] = key;
+    this->registerPDOKey(PDOID, key);
   }
   void register_textSensor(text_sensor::TextSensor *obj, std::string key, int PDOID, std::string (*convLambda)(uint8_t *) ) {
     ComfoSensor<text_sensor::TextSensor, std::string (*)(uint8_t *)> *cs = new ComfoSensor<text_sensor::TextSensor, std::string (*)(uint8_t *)>();
     cs->sensor = obj;
     cs->conversion = convLambda;
     textSensors[PDOID] = *cs;
-    this->PDOs.push_back(PDOID);
-    this->PDOsMap[PDOID] = key;
+    this->registerPDOKey(PDOID, key);
   }
   void register_binarySensor(binary_sensor::BinarySensor *obj, std::string key, int PDOID, bool (*convLambda)(uint8_t *) ) {
     ComfoSensor<binary_sensor::BinarySensor, bool (*)(uint8_t *)> *cs = new ComfoSensor<binary_sensor::BinarySensor, bool (*)(uint8_t *)>();
     cs->sensor = obj;
     cs->conversion = convLambda;
-    binarySensors[PDOID] = *cs;
-    this->PDOs.push_back(PDOID);
-    this->PDOsMap[PDOID] = key;
+    // insert (not []=): unlike sensors/textSensors, more than one
+    // binary_sensor can legitimately share a PDO — e.g. several constraint_*
+    // sensors all reading different bits out of PDO 230. []= would let a
+    // later registration on the same PDO silently overwrite an earlier one.
+    binarySensors.insert({PDOID, *cs});
+    this->registerPDOKey(PDOID, key);
   }
   /**
     * Send a command to the ComfoAir
@@ -251,11 +275,19 @@ class Comfoair: public Component, public climate::Climate, public esphome::api::
             maybeUpdateClimate(PDOID, val);
         }
 
-        auto binary_it = binarySensors.find(PDOID);
-        if (binary_it != binarySensors.end()) {
+        auto binary_range = binarySensors.equal_range(PDOID);
+        if (binary_range.first != binary_range.second) {
             matched = true;
-            const auto& el = binary_it->second;
-            el.sensor->publish_state(el.conversion(vals));
+            // One log line per PDO update, not per sensor — several binary
+            // sensors can share one PDO (e.g. the constraint_* sensors all
+            // reading PDO 230's bitset).
+            ESP_LOGD(TAG, "binarySensor pdo=%d len=%d raw=%02X%02X%02X%02X%02X%02X%02X%02X",
+                     PDOID, canMessage.length,
+                     vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]);
+            for (auto it = binary_range.first; it != binary_range.second; ++it) {
+                const auto& el = it->second;
+                el.sensor->publish_state(el.conversion(vals));
+            }
         }
 
         if (!matched) {
@@ -386,7 +418,9 @@ class Comfoair: public Component, public climate::Climate, public esphome::api::
   std::map<int, std::string> PDOsMap;
   std::map<int, ComfoSensor<sensor::Sensor, int>> sensors;
   std::map<int, ComfoSensor<text_sensor::TextSensor,  std::string (*)(uint8_t *)>> textSensors;
-  std::map<int, ComfoSensor<binary_sensor::BinarySensor, bool (*)(uint8_t *)>> binarySensors;
+  // multimap: unlike sensors/textSensors, more than one binary_sensor can
+  // legitimately share a single PDO (see register_binarySensor above).
+  std::multimap<int, ComfoSensor<binary_sensor::BinarySensor, bool (*)(uint8_t *)>> binarySensors;
 
 };
 
