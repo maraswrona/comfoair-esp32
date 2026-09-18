@@ -235,7 +235,10 @@ CONSTRAINT_BITS = {
     # "constraint_co2_zone_8": [54],
 }
 for _constraint_name, _constraint_bits in CONSTRAINT_BITS.items():
-    _check = " || ".join(f"comfoair_constraint_bit(vals, {b})" for b in _constraint_bits)
+    # Fully qualified: this code string is spliced into a lambda at global
+    # scope in the generated main.cpp, outside namespace esphome::comfoair,
+    # so the unqualified name isn't visible there.
+    _check = " || ".join(f"esphome::comfoair::comfoair_constraint_bit(vals, {b})" for b in _constraint_bits)
     binarySensors[_constraint_name] = {
         "PDO": 230,
         "code": f'''
